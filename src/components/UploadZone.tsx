@@ -25,7 +25,7 @@ export function UploadZone({ onUploadComplete, compact }: Props) {
     if (file.size === 0) return `${file.name}: File is empty`;
     if (file.size > 15 * 1024 * 1024) return `${file.name}: Too large (max 15MB)`;
     const ext = "." + file.name.split(".").pop()?.toLowerCase();
-    if (![".pdf", ".docx", ".txt"].includes(ext)) return `${file.name}: Unsupported type ${ext}`;
+    if (![".pdf", ".docx", ".txt", ".png", ".jpg", ".jpeg", ".webp"].includes(ext)) return `${file.name}: Unsupported type ${ext}`;
     return null;
   };
 
@@ -114,9 +114,9 @@ export function UploadZone({ onUploadComplete, compact }: Props) {
           <div className="mt-2 text-sm font-medium">Drop files or</div>
           <label className="mt-2 inline-flex px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-medium cursor-pointer hover:bg-indigo-700">
             {uploading ? <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin"/> Uploading</span> : "Browse"}
-            <input ref={inputRef} type="file" multiple accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={e=> e.target.files && handleFiles(e.target.files)} disabled={uploading} />
+            <input ref={inputRef} type="file" multiple accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg,image/webp" className="hidden" onChange={e=> e.target.files && handleFiles(e.target.files)} disabled={uploading} />
           </label>
-          <div className="text-[11px] text-slate-400 mt-2">PDF • DOCX • TXT • 15MB</div>
+          <div className="text-[11px] text-slate-400 mt-2">PDF • DOCX • TXT • PNG/JPG OCR • 15MB</div>
         </div>
 
         {selectedFiles.length>0 && (
@@ -155,7 +155,7 @@ export function UploadZone({ onUploadComplete, compact }: Props) {
             ref={inputRef}
             type="file"
             multiple
-            accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+            accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/png,image/jpeg,image/webp"
             className="hidden"
             id="file-upload-input"
             onChange={e=> { if (e.target.files) handleFiles(e.target.files); }}
@@ -177,7 +177,7 @@ export function UploadZone({ onUploadComplete, compact }: Props) {
           </div>
         )}
 
-        <div className="mt-3 text-xs text-slate-400">We validate MIME types & file contents server-side. Corrupted/password-protected files are handled gracefully.</div>
+        <div className="mt-3 text-xs text-slate-400">Scanned PDFs and image uploads are OCR-processed. We validate file types and sizes server-side.</div>
       </div>
 
       {error && <div className="mt-4 flex gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700"><AlertCircle className="w-5 h-5 shrink-0 mt-0.5"/>{error}</div>}

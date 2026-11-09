@@ -8,9 +8,36 @@ import { UploadZone } from "@/components/UploadZone";
 import { Send, FileText, Trash2, Copy, Download, Sparkles, Bot, User, Square, Plus, MessageSquare, BookOpen, Zap, Clock, ChevronDown, PanelRightClose, PanelRightOpen, Check, AlertTriangle, X } from "lucide-react";
 
 interface Doc { id:string; filename:string; size:number; status:string; chunkCount?:number; pageCount?:number; createdAt:string; preview?:string }
-interface Msg { id:string; role:string; content:string; sources?:string; createdAt:string }
+interface Msg { id:string; role:string; content:string; sources?:string | null; createdAt:string }
 interface Conv { id:string; documentId:string; title:string; createdAt:string }
-interface Source { chunkIndex:number; pageNumber?:number | null; heading?:string | null; preview:string }
+interface Source {
+  id?:string;
+  documentId?:string;
+  documentName?:string;
+  chunkIndex:number;
+  pageNumber?:number | null;
+  heading?:string | null;
+  passage?:string;
+  preview?:string;
+  evidenceStatus?: "strong" | "partial" | "limited";
+  matchCoverage?:number;
+}
+
+function getMessageSources(message: Msg): Source[] {
+  if (!message.sources) return [];
+  try {
+    const parsed: unknown = JSON.parse(message.sources);
+    return Array.isArray(parsed) ? parsed as Source[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function getEvidenceLabel(sources: Source[]): string {
+  if (sources.some((source) => source.evidenceStatus === "strong")) return "Strong supporting evidence";
+  if (sources.some((source) => source.evidenceStatus === "partial")) return "Partial supporting evidence";
+  return sources.length ? "Limited supporting evidence" : "No supporting passage found";
+}
 
 async function fetchDocuments(): Promise<Doc[]> {
   const res = await fetch("/api/documents");
@@ -42,6 +69,7 @@ function WorkspaceInner() {
 
   const [docs, setDocs] = useState<Doc[]>([]);
   const [selectedDoc, setSelectedDoc] = useState<string | null>(initialDoc);
+  const [comparisonDocIds, setComparisonDocIds] = useState<string[]>(initialDoc ? [initialDoc] : []);
   const [conversations, setConversations] = useState<Conv[]>([]);
   const [activeConv, setActiveConv] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -140,6 +168,17 @@ function WorkspaceInner() {
     setActiveConv(convId);
     setMessages([]);
   };
+  const toggleComparisonDocument = (docId: string, checked: boolean) => {
+    setComparisonDocIds((current) => {
+      if (checked && current.includes(docId)) return current;
+      if (!checked) return current.filter((id) => id !== docId);
+      if (new Set([...current, selectedDoc, docId].filter(Boolean)).size > 5) {
+        showToast("Compare up to 5 documents at once.");
+        return current;
+      }
+      return [...current, docId];
+    });
+  };
 
   const handleAsk = async (q?: string) => {
     const text = q || question;
@@ -158,7 +197,11 @@ function WorkspaceInner() {
       const res = await fetch(`/api/documents/${selectedDoc}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: text, conversationId: activeConv }),
+        body: JSON.stringify({
+          question: text,
+          conversationId: activeConv,
+          documentIds: questionDocumentIds,
+        }),
         signal: controller.signal,
       });
       if (!res.ok) {
@@ -250,6 +293,20 @@ function WorkspaceInner() {
 
   const copyText = (t:string) => { navigator.clipboard.writeText(t); showToast("Copied to clipboard"); };
   const downloadTxt = (t:string, name:string) => { const blob=new Blob([t],{type:"text/plain"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=name; a.click(); URL.revokeObjectURL(url); showToast("Downloaded"); };
+  const downloadAnswerMarkdown = (message: Msg) => {
+    const citations = getMessageSources(message).map((source, index) =>
+      `### Source ${index + 1}: ${source.documentName ?? "Document"}${source.pageNumber ? `, page ${source.pageNumber}` : ""}\n\nEvidence: ${source.evidenceStatus ?? "unrated"}\n\n> ${source.passage ?? source.preview ?? "Passage unavailable."}`,
+    ).join("\n\n");
+    const markdown = `# DocuMind answer\n\n${message.content}\n\n## Evidence\n\n${citations || "No supporting passages were retrieved."}\n`;
+    const blob = new Blob([markdown], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `answer-${message.id}.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast("Markdown exported");
+  };
 
   const suggested = [
     "What is this document about?",
@@ -261,6 +318,7 @@ function WorkspaceInner() {
   ];
 
   const selectedDocObj = docs.find(d=>d.id===selectedDoc);
+  const questionDocumentIds = Array.from(new Set([selectedDoc, ...comparisonDocIds].filter((id): id is string => Boolean(id))));
 
   return (
     <div className="min-h-screen bg-[#f8f9fc] flex">
@@ -302,16 +360,31 @@ function WorkspaceInner() {
                   <Link href="/dashboard" className="mt-2 inline-flex px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs">Upload</Link>
                 </div>
               ) : docs.map(doc=>(
-                <button key={doc.id} onClick={()=>selectDocument(doc.id)} className={`w-full text-left p-3 rounded-xl border transition flex gap-3 ${selectedDoc===doc.id ? "bg-indigo-50 border-indigo-200" : "bg-white border-slate-200 hover:border-slate-300"}`}>
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${selectedDoc===doc.id ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"}`}><FileText className="w-4.5 h-4.5"/></div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate leading-tight">{doc.filename}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{doc.chunkCount} chunks • {doc.pageCount} pages</div>
-                    <Badge variant={doc.status==="completed"?"success":"processing"} className="mt-1">{doc.status}</Badge>
+                <div key={doc.id} className={`rounded-xl border transition ${selectedDoc===doc.id ? "bg-indigo-50 border-indigo-200" : "bg-white border-slate-200 hover:border-slate-300"}`}>
+                  <div className="flex items-start gap-2 p-2">
+                    <button onClick={()=>selectDocument(doc.id)} aria-pressed={selectedDoc===doc.id} className="flex-1 min-w-0 text-left flex gap-3">
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${selectedDoc===doc.id ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"}`}><FileText className="w-4.5 h-4.5"/></div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate leading-tight">{doc.filename}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">{doc.chunkCount} chunks • {doc.pageCount} pages</div>
+                        <Badge variant={doc.status==="completed"?"success":"processing"} className="mt-1">{doc.status}</Badge>
+                      </div>
+                    </button>
+                    <label className="flex items-center gap-1 pt-1 text-[10px] text-slate-500" title="Include this document in questions">
+                      <input
+                        type="checkbox"
+                        aria-label={`Include ${doc.filename} in questions`}
+                        checked={questionDocumentIds.includes(doc.id)}
+                        disabled={doc.id === selectedDoc || doc.status !== "completed" || (questionDocumentIds.length >= 5 && !questionDocumentIds.includes(doc.id))}
+                        onChange={(event) => toggleComparisonDocument(doc.id, event.target.checked)}
+                      />
+                      Compare
+                    </label>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
+            <div className="px-4 pb-2 text-[11px] text-slate-500">Question scope: {questionDocumentIds.length} document(s), up to 5</div>
 
             <div className="border-t border-slate-100 p-3">
               <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest flex items-center justify-between">
@@ -340,7 +413,13 @@ function WorkspaceInner() {
             {/* Mobile doc selector */}
             <div className="md:hidden p-3 bg-white border-b border-slate-200 flex gap-2 overflow-x-auto">
               {docs.map(d=>(
-                <button key={d.id} onClick={()=>selectDocument(d.id)} className={`px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap border ${selectedDoc===d.id ? "bg-indigo-600 text-white border-indigo-600" : "bg-white border-slate-200"}`}>{d.filename.slice(0,18)}</button>
+                <div key={d.id} className="flex items-center gap-1 shrink-0">
+                  <button onClick={()=>selectDocument(d.id)} className={`px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap border ${selectedDoc===d.id ? "bg-indigo-600 text-white border-indigo-600" : "bg-white border-slate-200"}`}>{d.filename.slice(0,18)}</button>
+                  <label className="text-[10px] text-slate-500 flex items-center gap-1">
+                    <input type="checkbox" aria-label={`Include ${d.filename} in questions`} checked={questionDocumentIds.includes(d.id)} disabled={d.id === selectedDoc || d.status !== "completed" || (questionDocumentIds.length >= 5 && !questionDocumentIds.includes(d.id))} onChange={(event) => toggleComparisonDocument(d.id, event.target.checked)} />
+                    Compare
+                  </label>
+                </div>
               ))}
               {docs.length===0 && <span className="text-xs text-slate-500 py-2">No docs — <Link href="/dashboard" className="text-indigo-600">Upload</Link></span>}
             </div>
@@ -382,7 +461,9 @@ function WorkspaceInner() {
                     </div>
                   )}
 
-                  {messages.map(m=>(
+                  {messages.map(m=>{
+                    const messageSources = m.role === "assistant" ? getMessageSources(m) : [];
+                    return (
                     <div key={m.id} className={`flex gap-3 max-w-[760px] mx-auto ${m.role==="user" ? "justify-end" : "justify-start"}`}>
                       {m.role==="assistant" && <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center shrink-0 mt-1"><Bot className="w-4 h-4 text-white"/></div>}
                       <div className={`max-w-[85%] sm:max-w-[78%] rounded-2xl px-4 py-3 ${m.role==="user" ? "bg-slate-900 text-white rounded-br-sm" : "bg-white border border-slate-200 shadow-sm rounded-tl-sm"}`}>
@@ -393,15 +474,33 @@ function WorkspaceInner() {
                         </div>
                         <div className={`prose prose-sm max-w-none ${m.role==="user" ? "text-white" : "text-slate-800"} whitespace-pre-wrap leading-relaxed text-[14px]`}>{m.content}</div>
                         {m.role==="assistant" && (
+                          <section className="mt-3 border-t border-slate-100 pt-3" aria-label="Answer evidence">
+                            <div className="text-xs font-semibold text-slate-700">{getEvidenceLabel(messageSources)}</div>
+                            <p className="text-[11px] text-slate-500 mt-1">Evidence status is a retrieval-match heuristic, not a calibrated probability.</p>
+                            {messageSources.map((source, index)=>(
+                              <article key={source.id ?? `${source.documentId}-${source.chunkIndex}-${index}`} className="mt-2 rounded-xl border border-indigo-100 bg-indigo-50/70 p-3">
+                                <div className="flex flex-wrap gap-x-2 gap-y-1 text-[11px] font-medium text-indigo-800">
+                                  <span>Source {index + 1}</span>
+                                  {source.documentName && <span>{source.documentName}</span>}
+                                  {source.pageNumber && <span>Page {source.pageNumber}</span>}
+                                  {source.heading && <span>{source.heading}</span>}
+                                  <span className="capitalize">{source.evidenceStatus ?? "unrated"} evidence{typeof source.matchCoverage === "number" ? ` · ${Math.round(source.matchCoverage * 100)}% term match` : ""}</span>
+                                </div>
+                                <blockquote className="mt-2 border-l-2 border-indigo-300 pl-3 text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">{source.passage ?? source.preview ?? "The original passage is not available in this older conversation."}</blockquote>
+                              </article>
+                            ))}
+                          </section>
+                        )}
+                        {m.role==="assistant" && (
                           <div className="mt-3 flex gap-2">
                             <button onClick={()=>copyText(m.content)} className="px-2.5 py-1 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs flex items-center gap-1"><Copy className="w-3 h-3"/> Copy</button>
-                            <button onClick={()=>downloadTxt(m.content, `answer-${m.id}.txt`)} className="px-2.5 py-1 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs flex items-center gap-1"><Download className="w-3 h-3"/> Download</button>
+                            <button onClick={()=>downloadAnswerMarkdown(m)} className="px-2.5 py-1 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs flex items-center gap-1"><Download className="w-3 h-3"/> Export Markdown</button>
                           </div>
                         )}
                       </div>
                       {m.role==="user" && <div className="w-8 h-8 rounded-xl bg-slate-200 flex items-center justify-center shrink-0 mt-1"><User className="w-4 h-4"/></div>}
                     </div>
-                  ))}
+                  )})}
 
                   {streaming && (
                     <div className="flex gap-3 max-w-[760px] mx-auto">
@@ -410,8 +509,12 @@ function WorkspaceInner() {
                         <div className="flex items-center gap-2 text-xs text-slate-500 mb-2"><span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"/> Generating — streaming</div>
                         <div className="prose prose-sm whitespace-pre-wrap text-[14px] leading-relaxed">{streamText}<span className="inline-block w-2 h-4 bg-indigo-600 animate-pulse ml-0.5 align-middle"/></div>
                         {sources.length>0 && (
-                          <div className="mt-3 flex flex-wrap gap-1.5">
-                            {sources.map((s,i)=><span key={i} className="px-2 py-1 bg-indigo-50 border border-indigo-100 rounded-full text-xs">Source {i+1}{s.pageNumber? ` • p.${s.pageNumber}`:""}</span>)}
+                          <div className="mt-3 space-y-2">
+                            <div className="text-xs font-medium text-slate-600">{getEvidenceLabel(sources)}</div>
+                            {sources.map((s,i)=><div key={s.id ?? `${s.documentId}-${s.chunkIndex}-${i}`} className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+                              <div className="text-xs font-medium text-indigo-800">{s.documentName ?? `Source ${i + 1}`}{s.pageNumber ? ` · Page ${s.pageNumber}` : ""} · {s.evidenceStatus ?? "unrated"} evidence</div>
+                              <blockquote className="mt-2 text-xs text-slate-700 whitespace-pre-wrap">{s.passage ?? s.preview}</blockquote>
+                            </div>)}
                           </div>
                         )}
                       </div>
@@ -493,17 +596,18 @@ function WorkspaceInner() {
                         <option value="findings">Main findings</option>
                         <option value="conclusions">Conclusions</option>
                         <option value="action">Action items</option>
+                        <option value="flashcards">Flashcards</option>
                       </select>
                     </div>
                     <Button size="sm" className="w-full mt-3" onClick={handleSummarize} disabled={summaryLoading}>
-                      {summaryLoading ? <><Spinner size={14}/> Generating...</> : "Generate Summary"}
+                      {summaryLoading ? <><Spinner size={14}/> Generating...</> : summaryType === "flashcards" ? "Generate Flashcards" : "Generate Summary"}
                     </Button>
                     {summary && (
                       <div className="mt-3">
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm leading-relaxed whitespace-pre-wrap max-h-[280px] overflow-y-auto">{summary}</div>
                         <div className="mt-2 flex gap-2">
                           <button onClick={()=>copyText(summary)} className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs flex items-center justify-center gap-1 hover:bg-slate-50"><Copy className="w-3.5 h-3.5"/> Copy</button>
-                          <button onClick={()=>downloadTxt(summary, `summary-${selectedDoc}.txt`)} className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs flex items-center justify-center gap-1 hover:bg-slate-50"><Download className="w-3.5 h-3.5"/> Download</button>
+                          <button onClick={()=>downloadTxt(summary, `${summaryType}-${selectedDoc}.md`)} className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs flex items-center justify-center gap-1 hover:bg-slate-50"><Download className="w-3.5 h-3.5"/> Export Markdown</button>
                         </div>
                       </div>
                     )}
@@ -522,8 +626,8 @@ function WorkspaceInner() {
                     <div className="mt-3 space-y-2">
                       {sources.map((s,i)=>(
                         <div key={i} className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
-                          <div className="text-xs font-medium text-indigo-700">Source {i+1} {s.pageNumber ? `• Page ${s.pageNumber}` : ""} {s.heading ? `• ${s.heading}`: ""}</div>
-                          <div className="text-xs text-slate-600 mt-1 line-clamp-3">{s.preview}</div>
+                          <div className="text-xs font-medium text-indigo-700">{s.documentName ?? `Source ${i+1}`} {s.pageNumber ? `• Page ${s.pageNumber}` : ""} {s.heading ? `• ${s.heading}`: ""} • {s.evidenceStatus ?? "unrated"}</div>
+                          <blockquote className="text-xs text-slate-600 mt-2 whitespace-pre-wrap">{s.passage ?? s.preview}</blockquote>
                         </div>
                       ))}
                     </div>

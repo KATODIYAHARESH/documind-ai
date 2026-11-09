@@ -141,7 +141,7 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
-          <div className="mt-4 text-xs text-slate-500 bg-amber-50 border border-amber-200 rounded-xl p-3">Password-protected PDFs and scanned image-only PDFs are detected and reported gracefully.</div>
+          <div className="mt-4 text-xs text-slate-500 bg-amber-50 border border-amber-200 rounded-xl p-3">Scanned PDFs are OCR-processed locally by the app server; clear English scans work best.</div>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-6">
           <h3 className="font-semibold flex items-center gap-2"><Search className="w-5 h-5 text-indigo-600"/> Perfect for</h3>

@@ -1,9 +1,17 @@
-import { extractTextFromImage } from "@/lib/ocr";
+import { extractTextFromImage, extractTextFromImages } from "@/lib/ocr";
+import { createCanvas, DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
+
+export interface ExtractedPage {
+  pageNumber: number;
+  text: string;
+  ocr?: boolean;
+}
 
 export interface ExtractedDoc {
   text: string;
   pageCount?: number;
   headings?: string[];
+  pages?: ExtractedPage[];
 }
 
 export function cleanText(text: string): string {
@@ -32,7 +40,7 @@ export function chunkText(text: string, chunkSize = 900, overlap = 150): { conte
     if (isHeading && para.trim().length < 80) {
       if (current.trim()) chunks.push({ content: current.trim(), heading: currentHeading });
       current = "";
-      currentHeading = trimmed;
+      currentHeading = trimmed.replace(/^#{1,6}\s+/, "");
       continue;
     }
 
@@ -70,6 +78,117 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+export function chunkPages(pages: ExtractedPage[], chunkSize = 900, overlap = 150): { content: string; heading?: string; pageNumber: number; ocr?: boolean }[] {
+  return pages.flatMap((page) =>
+    chunkText(page.text, chunkSize, overlap).map((chunk) => ({
+      ...chunk,
+      heading: page.ocr ? [chunk.heading, "OCR extracted"].filter(Boolean).join(" · ") : chunk.heading,
+      pageNumber: page.pageNumber,
+      ocr: page.ocr,
+    })),
+  );
+}
+
+interface PdfTextItem {
+  str: string;
+  transform: number[];
+  width: number;
+  height?: number;
+}
+
+export function layoutPdfTextItems(items: PdfTextItem[]): { text: string; heading?: string }[] {
+  const rows: { y: number; items: PdfTextItem[] }[] = [];
+
+  for (const item of items.filter((entry) => entry.str.trim())) {
+    const y = item.transform[5] ?? 0;
+    let row = rows.find((candidate) => Math.abs(candidate.y - y) <= 3);
+    if (!row) {
+      row = { y, items: [] };
+      rows.push(row);
+    }
+    row.items.push(item);
+  }
+
+  const lines = rows
+    .sort((a, b) => b.y - a.y)
+    .map((row) => {
+      const sorted = row.items.sort((a, b) => (a.transform[4] ?? 0) - (b.transform[4] ?? 0));
+      let text = "";
+      let previousEnd = 0;
+      for (const [index, item] of sorted.entries()) {
+        const x = item.transform[4] ?? 0;
+        const gap = x - previousEnd;
+        if (index > 0) text += gap > 24 ? " | " : " ";
+        text += item.str.trim();
+        previousEnd = x + item.width;
+      }
+      return { text: text.trim(), fontSize: Math.max(...sorted.map((item) => item.height ?? item.transform[3] ?? 0), 0) };
+    })
+    .filter((line) => line.text);
+
+  const fontSizes = lines.map((line) => line.fontSize).filter((size) => size > 0).sort((a, b) => a - b);
+  const medianFontSize = fontSizes[Math.floor(fontSizes.length / 2)] ?? 0;
+  let heading: string | undefined;
+
+  return lines.map((line) => {
+    const isHeading = medianFontSize > 0
+      && line.fontSize >= medianFontSize * 1.3
+      && line.text.length <= 120
+      && !/[.!?]$/.test(line.text);
+    if (isHeading) heading = line.text;
+    return { text: isHeading ? `# ${line.text}` : line.text, heading };
+  });
+}
+
+export function formatPdfLayout(lines: Array<{ text: string }>): string {
+  return lines.map((line) => line.text.startsWith("# ") ? `\n\n${line.text}\n\n` : line.text).join("\n");
+}
+
+async function extractPdfPages(arrayBuf: ArrayBuffer): Promise<{ pages: ExtractedPage[]; pageCount: number }> {
+  Object.assign(globalThis, { DOMMatrix, ImageData, Path2D });
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(arrayBuf), verbosity: 0 });
+  const pdf = await loadingTask.promise;
+  const pages: ExtractedPage[] = [];
+  const ocrPages: { pageNumber: number; image: Buffer }[] = [];
+  const pageCount = pdf.numPages;
+
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const layout = layoutPdfTextItems(content.items.filter((item): item is typeof item & PdfTextItem => "str" in item));
+      let text = formatPdfLayout(layout);
+
+      if (text.trim().length < 20) {
+        const viewport = page.getViewport({ scale: 1.75 });
+        const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+        const context = canvas.getContext("2d");
+        await page.render({ canvas: canvas as never, canvasContext: context as never, viewport }).promise;
+        ocrPages.push({ pageNumber, image: canvas.toBuffer("image/png") });
+      }
+
+      pages.push({ pageNumber, text: cleanText(text) });
+      page.cleanup();
+    }
+    if (ocrPages.length) {
+      const recognized = await extractTextFromImages(ocrPages.map((entry) => entry.image));
+      for (const [index, ocrText] of recognized.entries()) {
+        if (!ocrText) continue;
+        const page = pages.find((candidate) => candidate.pageNumber === ocrPages[index].pageNumber);
+        if (page) {
+          page.text = cleanText(ocrText);
+          page.ocr = true;
+        }
+      }
+      }
+  } finally {
+      await loadingTask.destroy();
+  }
+
+  return { pages: pages.filter((page) => page.text), pageCount };
+}
+
 export async function extractTextFromFile(file: File | { arrayBuffer: () => Promise<ArrayBuffer>, type: string, name: string }): Promise<ExtractedDoc> {
   const arrayBuf = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuf);
@@ -79,7 +198,8 @@ export async function extractTextFromFile(file: File | { arrayBuffer: () => Prom
   if (mimeType.startsWith("image/") || [".png", ".jpg", ".jpeg", ".webp"].includes("." + filename.split(".").pop()?.toLowerCase())) {
     const ocrText = await extractTextFromImage(buffer);
     if (!ocrText.trim()) throw new Error("No text detected in the image using OCR.");
-    return { text: cleanText(ocrText), pageCount: 1 };
+    const text = cleanText(ocrText);
+    return { text, pageCount: 1, pages: [{ pageNumber: 1, text, ocr: true }] };
   }
   
   // TXT - check extension first
@@ -105,86 +225,16 @@ export async function extractTextFromFile(file: File | { arrayBuffer: () => Prom
   
   // PDF - try multiple strategies
   if (mimeType.includes("pdf") || filename.endsWith(".pdf") || mimeType === "application/octet-stream") {
-    // Strategy 1: unpdf (most reliable for server)
     try {
-      const { extractText } = await import("unpdf");
-      const result = await extractText(new Uint8Array(arrayBuf), { mergePages: true } as any);
-      let text = "";
-      let numPages = 1;
-      if (typeof result.text === "string") text = result.text;
-      else if (Array.isArray(result.text)) text = result.text.join("\n\n");
-      else if ((result as any).totalPages) numPages = (result as any).totalPages;
-      // unpdf returns { text, totalPages } - handle both shapes
-      if ((result as any).totalPages) numPages = (result as any).totalPages;
-      if (Array.isArray(text)) text = text.join("\n\n");
-      if (!text || text.trim().length < 10) throw new Error("unpdf empty");
-      return { text: cleanText(text as string), pageCount: numPages };
-    } catch (e: any) {
-      console.warn("unpdf failed, trying pdf-parse fallback:", e.message);
-      // Continue to fallback
-    }
-    
-    // Strategy 2: pdf-parse legacy / v2 with worker disabled attempt
-    try {
-      const pdfParseModule: any = await import("pdf-parse");
-      let text = "";
-      let numPages = 1;
-      if (pdfParseModule.PDFParse) {
-        try {
-          const parser = new pdfParseModule.PDFParse({ data: new Uint8Array(arrayBuf) });
-          const result = await parser.getText();
-          text = result.text || "";
-          numPages = result.numpages || result.numPages || result.totalPages || 1;
-          if (typeof parser.destroy === "function") await parser.destroy();
-        } catch (inner: any) {
-          // Try with Buffer fallback
-          if (inner.message?.includes("worker") || inner.message?.includes("Cannot find module")) {
-            throw inner;
-          }
-          throw inner;
-        }
-      } else if (typeof pdfParseModule.default === "function") {
-        const data = await pdfParseModule.default(buffer);
-        text = data.text || "";
-        numPages = data.numpages || data.numPages || data.totalPages || 1;
-      } else if (typeof pdfParseModule === "function") {
-        const data = await pdfParseModule(buffer);
-        text = data.text || "";
-        numPages = data.numpages || data.numPages || data.totalPages || 1;
-      }
-      if (text && text.trim().length >= 10) {
-        return { text: cleanText(text), pageCount: numPages };
-      }
-      throw new Error("pdf-parse returned empty");
-    } catch (e: any) {
-      console.warn("pdf-parse fallback failed:", e.message);
+      const { pages, pageCount } = await extractPdfPages(arrayBuf);
+      const text = pages.map((page) => page.text).join("\n\n");
+      if (text.trim().length >= 10) return { text, pageCount, pages };
+    } catch (error) {
+      console.error("PDF text and OCR extraction failed:", error);
+      throw new Error("Could not read this PDF. It may be encrypted, corrupted, or contain pages that could not be OCR-processed.");
     }
 
-    // Strategy 3: pdfjs-dist direct (manual)
-    try {
-      // Use pdfjs-dist legacy build - dynamic import without type checking
-      // @ts-ignore - dynamic import with fallback
-      const pdfjs: any = await (async () => {
-        try { return await import("pdfjs-dist/legacy/build/pdf.mjs"); } catch {}
-        return await import("pdfjs-dist");
-      })();
-      if (pdfjs.getDocument) {
-        const loadingTask = pdfjs.getDocument({ data: new Uint8Array(arrayBuf), verbosity: 0 });
-        const pdf = await loadingTask.promise;
-        let fullText = "";
-        for (let i=1; i<=pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          const strings = (content.items as any[]).map((it:any)=> it.str || "").join(" ");
-          fullText += strings + "\n\n";
-        }
-        if (fullText.trim().length >= 10) return { text: cleanText(fullText), pageCount: pdf.numPages };
-      }
-    } catch (e: any) {
-      console.warn("pdfjs fallback failed:", e.message);
-    }
-
-    throw new Error("Failed to extract PDF text. The file may be scanned (image-only), encrypted, or corrupted. Try TXT or DOCX, or ensure PDF has selectable text.");
+    throw new Error("No readable text was found in the PDF, including after OCR. Check that the pages are legible and not password-protected.");
   }
   
   throw new Error(`Unsupported file type: ${mimeType || filename}. Allowed: PDF, DOCX, TXT, PNG, JPG, JPEG, WEBP`);

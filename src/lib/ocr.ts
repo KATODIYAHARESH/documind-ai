@@ -1,22 +1,30 @@
-import Tesseract from "tesseract.js";
+import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createWorker } from "tesseract.js";
 
-export async function extractTextFromImage(file: Blob | File | ArrayBuffer | Buffer): Promise<string> {
+export async function extractTextFromImages(images: Array<Blob | File | ArrayBuffer | Buffer>): Promise<string[]> {
+  if (images.length === 0) return [];
+  const cachePath = join(tmpdir(), "documind-tesseract");
+  await mkdir(cachePath, { recursive: true });
+  const worker = await createWorker("eng", 1, { cachePath, logger: () => undefined });
   try {
-    let image: Blob | Buffer;
-    if (file instanceof ArrayBuffer) {
-      image = Buffer.from(file);
-    } else if (Buffer.isBuffer(file)) {
-      image = file;
-    } else {
-      image = file;
+    const results: string[] = [];
+    for (const image of images) {
+      const input = image instanceof ArrayBuffer ? Buffer.from(image) : image;
+      const result = await worker.recognize(input);
+      results.push(result.data.text.trim());
     }
-
-    const result = await Tesseract.recognize(image as any, "eng", {
-      logger: () => undefined,
-    });
-    return (result?.data?.text || "").trim();
+    return results;
   } catch (error) {
     console.warn("OCR failed:", error);
-    throw new Error("OCR failed for this scanned image. Please upload a text-based PDF, DOCX, or TXT file.");
+    throw new Error("OCR could not read one or more scanned pages. Check that the image is clear and try again.");
+  } finally {
+    await worker.terminate();
   }
+}
+
+export async function extractTextFromImage(image: Blob | File | ArrayBuffer | Buffer): Promise<string> {
+  const [text] = await extractTextFromImages([image]);
+  return text;
 }

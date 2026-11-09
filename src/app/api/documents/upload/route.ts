@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { documents, chunks } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { extractTextFromFile, chunkText, validateFile, estimateTokens } from "@/lib/document-processing";
+import { extractTextFromFile, chunkPages, validateFile, estimateTokens } from "@/lib/document-processing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     console.log(`[upload] Received ${files.length} files:`, files.map(f=>`${f.name} (${f.size} bytes, ${f.type})`));
     
     if (!files || files.length === 0) {
-      return NextResponse.json({ error: "No files received. Please select a PDF, DOCX, or TXT file." }, { status: 400 });
+      return NextResponse.json({ error: "No files received. Please select a PDF, DOCX, TXT, PNG, or JPEG file." }, { status: 400 });
     }
     
     if (files.length > 5) {
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
         console.log(`[upload] Extracted ${extracted.text.length} chars from ${file.name}, pages=${extracted.pageCount}`);
         
         if (!extracted.text || extracted.text.trim().length < 20) {
-          results.push({ filename: file.name, error: "Document appears empty or text extraction returned no content. For PDFs, ensure it contains selectable text (not scanned images).", status: "failed" });
+          results.push({ filename: file.name, error: "Document appears empty or no readable text was extracted, including after OCR.", status: "failed" });
           continue;
         }
         
@@ -80,18 +80,19 @@ export async function POST(req: NextRequest) {
         
         console.log(`[upload] Created document record ${doc.id}`);
         
-        const chunked = chunkText(extracted.text, 900, 150);
+        const pages = extracted.pages ?? [{ pageNumber: 1, text: extracted.text }];
+        const chunked = chunkPages(pages, 900, 150);
         console.log(`[upload] Chunked into ${chunked.length} chunks`);
-        
+
         const contentChunks = chunked.length > 0
           ? chunked
-          : [{ content: extracted.text.slice(0, 2000), heading: undefined }];
+          : [{ content: extracted.text.slice(0, 2000), heading: undefined, pageNumber: 1 }];
         const chunkInserts = contentChunks.map((c, idx) => ({
             documentId: doc.id,
           chunkIndex: idx,
           content: c.content,
           heading: c.heading,
-          pageNumber: Math.floor((idx / Math.max(1, contentChunks.length)) * (extracted.pageCount || 1)) + 1,
+          pageNumber: c.pageNumber,
           tokenCount: estimateTokens(c.content),
         }));
         
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
         let msg = err.message || "Processing failed";
         // Friendly messages
         if (msg.includes("password") || msg.includes("encrypted")) msg = "This PDF is password-protected and cannot be processed.";
-        if (msg.includes("No extractable")) msg = "No extractable text found. Scanned PDFs (image-only) are not supported. Please use a PDF with selectable text or convert to TXT/DOCX.";
+        if (msg.includes("No extractable")) msg = "No readable text was found, even after OCR. Check the scan quality or convert the document to TXT/DOCX.";
         results.push({ filename: file.name, error: msg, status: "failed" });
       }
     }

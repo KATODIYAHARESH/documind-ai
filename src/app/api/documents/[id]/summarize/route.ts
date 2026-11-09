@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { documents, chunks } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { generateSummary } from "@/lib/ai/provider";
+import { generateSummary, SummaryType } from "@/lib/ai/provider";
 
 export const dynamic = "force-dynamic";
-const summaryTypes = ["short", "detailed", "keypoints", "definitions", "findings", "conclusions", "action"] as const;
+const summaryTypes: SummaryType[] = ["short", "detailed", "keypoints", "definitions", "findings", "conclusions", "action", "flashcards"];
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       context = context.slice(0, 5000) + "\n\n[... middle sections truncated ...]\n\n" + context.slice(-5000);
     }
     
-    const summary = await generateSummary(context, type as (typeof summaryTypes)[number]);
+    const summary = await generateSummary(context, type as SummaryType);
     
     return NextResponse.json({ summary, type, documentId: id });
   } catch (e: any) {

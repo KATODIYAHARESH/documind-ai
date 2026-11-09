@@ -1,0 +1,106 @@
+[
+  {
+    "id": "invoice-deadline",
+    "question": "When is payment due after invoice?",
+    "expectedSourceIds": ["invoice-deadline-source"],
+    "requiredFacts": ["30 days after the invoice date"],
+    "chunks": [
+      {
+        "id": "invoice-deadline-source",
+        "documentId": "contract-a",
+        "chunkIndex": 0,
+        "pageNumber": 2,
+        "heading": "Payment",
+        "content": "Invoices must be paid within 30 days after the invoice date.",
+        "tokenCount": 13
+      },
+      {
+        "id": "invoice-deadline-distractor",
+        "documentId": "contract-a",
+        "chunkIndex": 1,
+        "pageNumber": 3,
+        "heading": "Notices",
+        "content": "Notices must be delivered to the addresses listed in this agreement.",
+        "tokenCount": 12
+      }
+    ]
+  },
+  {
+    "id": "termination-notice",
+    "question": "How many days notice are needed to terminate the agreement?",
+    "expectedSourceIds": ["termination-notice-source"],
+    "requiredFacts": ["60 days written notice"],
+    "chunks": [
+      {
+        "id": "termination-notice-source",
+        "documentId": "contract-b",
+        "chunkIndex": 0,
+        "pageNumber": 7,
+        "heading": "Termination",
+        "content": "Either party may terminate this agreement with 60 days written notice.",
+        "tokenCount": 13
+      },
+      {
+        "id": "termination-notice-distractor",
+        "documentId": "contract-b",
+        "chunkIndex": 1,
+        "pageNumber": 2,
+        "heading": "Payment",
+        "content": "Invoices are payable within 45 days of receipt.",
+        "tokenCount": 9
+      }
+    ]
+  },
+  {
+    "id": "renewal-period",
+    "question": "What is the renewal term and opt-out notice?",
+    "expectedSourceIds": ["renewal-period-source"],
+    "requiredFacts": ["one-year terms", "90 days notice"],
+    "chunks": [
+      {
+        "id": "renewal-period-source",
+        "documentId": "contract-c",
+        "chunkIndex": 0,
+        "pageNumber": 4,
+        "heading": "Renewal",
+        "content": "This agreement automatically renews for successive one-year terms unless either party gives 90 days notice before expiration.",
+        "tokenCount": 21
+      },
+      {
+        "id": "renewal-period-distractor",
+        "documentId": "contract-c",
+        "chunkIndex": 1,
+        "pageNumber": 8,
+        "heading": "Confidentiality",
+        "content": "Confidential information must be protected during the agreement term.",
+        "tokenCount": 10
+      }
+    ]
+  },
+  {
+    "id": "compare-payment-terms",
+    "question": "Compare payment terms across these contracts.",
+    "expectedSourceIds": ["payment-contract-a", "payment-contract-b"],
+    "requiredFacts": ["30 days after invoice", "45 days after invoice"],
+    "chunks": [
+      {
+        "id": "payment-contract-a",
+        "documentId": "contract-a",
+        "chunkIndex": 0,
+        "pageNumber": 2,
+        "heading": "Payment",
+        "content": "Contract A payment terms: payment is due within 30 days after invoice.",
+        "tokenCount": 13
+      },
+      {
+        "id": "payment-contract-b",
+        "documentId": "contract-b",
+        "chunkIndex": 0,
+        "pageNumber": 5,
+        "heading": "Payment",
+        "content": "Contract B payment terms: payment is due within 45 days after invoice.",
+        "tokenCount": 13
+      }
+    ]
+  }
+]

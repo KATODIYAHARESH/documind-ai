@@ -1,0 +1,20 @@
+{
+  "dataset": "evaluation/dataset.json",
+  "datasetCases": 4,
+  "retrievalDepth": 5,
+  "metrics": {
+    "answerEvidenceSupportAccuracy": 1.0,
+    "citationPrecision": 0.7142857143,
+    "retrievalRecallAt5": 1.0
+  },
+  "methodology": {
+    "answerEvidenceSupportAccuracy": "All required gold facts occur verbatim in the passages retrieved for a case; this does not score a generated model answer.",
+    "citationPrecision": "Retrieved source IDs matching expected evidence divided by all retrieved source IDs.",
+    "retrievalRecallAt5": "Expected source IDs retrieved in the top five divided by all expected source IDs."
+  },
+  "limitations": [
+    "The benchmark uses four synthetic contract questions and is not representative of legal document distributions.",
+    "The benchmark measures retrieval evidence and source selection, not Gemini factuality, hallucination rate, or human-rated answer quality.",
+    "Re-run npm run evaluate after changing retrieval behavior; update this report only from the emitted test metrics."
+  ]
+}

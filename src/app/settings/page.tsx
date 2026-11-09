@@ -45,7 +45,7 @@ export default function SettingsPage() {
   const setThemePref = (t:string) => { setTheme(t); localStorage.setItem("documind-theme", t); };
 
   const clearAll = async () => {
-    if (!confirm(`Delete all ${docs.length} documents? This cannot be undone.`)) return;
+    if (!confirm(`Delete all ${docs.length} documents, extracted text, chunks, citations, and conversations from this app's shared storage? This cannot be undone.`)) return;
     setClearing(true);
     const failedIds: string[] = [];
     const failedNames: string[] = [];
@@ -152,7 +152,12 @@ export default function SettingsPage() {
 
           {/* Data management */}
           <Card className="p-6 mt-6">
-            <h2 className="font-semibold flex items-center gap-2"><HardDrive className="w-5 h-5 text-slate-700"/> Data Management</h2>
+            <h2 className="font-semibold flex items-center gap-2"><HardDrive className="w-5 h-5 text-slate-700"/> Privacy, Retention & Data Management</h2>
+            <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-950">
+              <p><strong>Retention:</strong> Documents stay in storage until you delete them. No automatic expiration is configured. Demo in-memory data is cleared when the server restarts; PostgreSQL data persists until deleted.</p>
+              <p className="mt-2"><strong>AI processing:</strong> With a Gemini API key configured, retrieved passages and your question are sent to Google to generate an answer. Without a key, the contextual demo responder runs in this app server. OCR runs on this server; Tesseract.js may download its English language model on first use and cache it in the operating-system temporary directory.</p>
+              <p className="mt-2"><strong>Deletion:</strong> Use the button below to remove all documents, extracted text, chunks, citations, and related conversations from the configured app database. This demo has shared storage and no per-user data isolation.</p>
+            </div>
             <div className="mt-4 flex items-center justify-between p-4 bg-slate-50 border border-slate-200 rounded-xl">
               <div>
                 <div className="font-medium text-sm">Documents in storage</div>
@@ -162,7 +167,7 @@ export default function SettingsPage() {
             </div>
             <div className="mt-4 flex gap-3">
               <Button variant="danger" size="sm" onClick={clearAll} disabled={clearing || docs.length===0}><Trash2 className="w-4 h-4"/>{clearing ? "Clearing..." : "Clear All Documents"}</Button>
-              <div className="text-xs text-slate-500 flex items-center">This deletes chunks & conversations (cascade).</div>
+              <div className="text-xs text-slate-500 flex items-center">Deletes all stored documents and their extracted content, chunks, citations, and conversations.</div>
             </div>
           </Card>
 
@@ -173,7 +178,7 @@ export default function SettingsPage() {
               {[
                 "API keys stored server-side only (process.env) — never in browser bundle",
                 ".env.local in .gitignore — no secrets committed",
-                "Server-side file validation: MIME, extension, size, magic bytes, empty & corrupted handling",
+                "Server-side file extension, size, and non-empty validation",
                 "Prompt injection resistance — document content treated as untrusted data",
                 "Input sanitization & request size limits (15MB, 2000 char questions)",
                 "No sensitive logs — document content not logged",
@@ -187,8 +192,8 @@ export default function SettingsPage() {
           <Card className="p-6 mt-6">
             <h2 className="font-semibold">About DocuMind AI</h2>
             <div className="mt-3 text-sm text-slate-600 leading-relaxed">
-              <p>DocuMind AI is a production-ready document Q&A SaaS built with Next.js App Router, Drizzle ORM, PostgreSQL, and Gemini. It implements real text extraction (pdf-parse, mammoth), semantic chunking, keyword retrieval with fallback, and genuine SSE streaming.</p>
-              <p className="mt-3">Limitations: No vector embeddings (uses keyword retrieval), scanned PDFs need OCR, dark mode UI pending, no auth yet (ownership checks ready for extension).</p>
+              <p>DocuMind AI is a document-workspace demo built with Next.js App Router, Drizzle ORM, PostgreSQL, and optional Gemini. It extracts page-aware PDF text, OCRs scanned pages, and streams answers with source passages.</p>
+              <p className="mt-3">Limitations: Retrieval uses keyword scoring rather than embeddings; OCR is English-only; authentication and per-user document authorization are not production-ready.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <span className="px-3 py-1.5 bg-slate-900 text-white rounded-full">Next.js 16.2</span>

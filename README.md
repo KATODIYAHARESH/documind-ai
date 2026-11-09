@@ -6,12 +6,15 @@ DocuMind AI is a document Q&A web app built with Next.js. Upload a document, ask
 
 ## What it does
 
-- Upload PDF, DOCX, and TXT files through the dashboard or workspace.
+- Upload PDF, DOCX, TXT, PNG, JPG, and WebP files through the dashboard or workspace.
 - Validate file size (15 MB per file), file type, and extracted content on the server. A request can contain up to five files.
-- Extract document text, normalize it, split it into overlapping chunks, and store document metadata and source chunks.
-- Search chunks with keyword scoring and cosine similarity, then provide relevant passages to the answer generator.
+- Extract selectable PDF text page-by-page, preserve layout/table columns and headings, and OCR scanned PDF pages and image uploads.
+- Split page-specific text into overlapping chunks and keep the actual PDF page number with each citation.
+- Ask questions across up to five selected documents, then inspect the exact retrieved passage, page, source document, and evidence-match status beside every answer.
 - Stream answers as Server-Sent Events (SSE), including source metadata. Follow-up questions can use saved conversation history.
-- Summarize a document as a short or detailed summary, key points, definitions, findings, conclusions, or action items.
+- Generate short/detailed summaries, key points, definitions, findings, conclusions, action items, or flashcards; export answers and summaries to Markdown.
+- Review a small synthetic contract benchmark with answer-evidence support, citation precision, and retrieval recall metrics.
+- Review retention and provider disclosure in Settings, and delete all stored documents and their derived content/conversations from the app.
 - Manage documents and conversations from the dashboard and workspace. Delete operations remove related records.
 - Run with an in-memory demo store when no database URL is configured, or use PostgreSQL through Drizzle ORM.
 
@@ -30,7 +33,7 @@ DocuMind AI is a document Q&A web app built with Next.js. Upload a document, ask
 | Web app | Next.js 16 App Router, React 19, TypeScript |
 | Styling and icons | Tailwind CSS 4, Lucide React |
 | Data access | Drizzle ORM, PostgreSQL, `pg` |
-| Document extraction | `unpdf`, `pdf-parse`, `mammoth`, Tesseract.js |
+| Document extraction | PDF.js, `@napi-rs/canvas`, `mammoth`, Tesseract.js |
 | AI | Google Gemini REST API; contextual demo responder when no API key is configured |
 | Tests and lint | Vitest, ESLint, TypeScript |
 
@@ -40,16 +43,17 @@ DocuMind AI is a document Q&A web app built with Next.js. Upload a document, ask
 
 1. The browser sends multipart form data to `POST /api/documents/upload`.
 2. The server validates file count, extension, size, and content, then extracts PDF, DOCX, TXT, or supported image text.
-3. Extracted text is cleaned and split into chunks (900-character target size with 150-character overlap by default).
-4. The document and its chunks are saved. The document is marked `completed` after indexing succeeds.
-5. The dashboard reads document metadata from `GET /api/documents`.
+3. PDF.js extracts text and text positions per page; columns are kept distinct and headings are inferred from layout. Scanned pages are rendered locally with `@napi-rs/canvas` and recognized with Tesseract.js. OCR runs on the app server; Tesseract.js may download the English model on first use and caches it outside the project in the OS temporary directory.
+4. Text is cleaned and split into chunks (900-character target size with 150-character overlap) without losing the source page number.
+5. The document and its chunks are saved. The document is marked `completed` after indexing succeeds.
+6. The dashboard reads document metadata from `GET /api/documents`.
 
 ### Questions and answers
 
-1. The workspace sends a question to `POST /api/documents/[id]/ask`.
-2. The server retrieves up to five relevant chunks, includes conversation history, and starts an SSE response.
-3. SSE events report metadata (`meta`), answer text (`chunk`), errors (`error`), and completion (`done`).
-4. User and assistant messages are stored with source references. With a Gemini key, generation uses Google Gemini; without one, a local contextual demo responder is used.
+1. The workspace sends a question and up to five selected document IDs to `POST /api/documents/[id]/ask`.
+2. The server retrieves up to five relevant chunks across those documents, includes conversation history, and starts an SSE response.
+3. SSE metadata includes exact passages, source document names, actual PDF pages, and a lexical evidence-match status (strong/partial/limited). This status is a heuristic, not a calibrated probability.
+4. User and assistant messages are stored with the full source references. With a Gemini key, the question and retrieved passages are sent to Google Gemini; without one, a contextual demo responder runs in the app server.
 
 ### Summaries
 
@@ -70,8 +74,8 @@ PostgreSQL mode uses the schema in `src/db/schema.ts`. Without `DATABASE_URL`, t
 | `GET` | `/api/documents` | List documents |
 | `POST` | `/api/documents/upload` | Validate, extract, chunk, and save up to five files |
 | `GET`, `DELETE` | `/api/documents/[id]` | Read a document and its chunks, or delete it |
-| `POST` | `/api/documents/[id]/ask` | Ask a question and receive an SSE answer |
-| `POST` | `/api/documents/[id]/summarize` | Generate a selected summary type |
+| `POST` | `/api/documents/[id]/ask` | Ask a question across up to five document IDs and receive SSE answer/evidence metadata |
+| `POST` | `/api/documents/[id]/summarize` | Generate a summary, action items, or flashcards |
 | `GET`, `POST` | `/api/conversations` | List or create conversations |
 | `GET`, `DELETE` | `/api/conversations/[id]` | Read or delete a conversation and its messages |
 | `POST` | `/api/chat/clear` | Clear messages in a conversation |
@@ -81,7 +85,7 @@ PostgreSQL mode uses the schema in `src/db/schema.ts`. Without `DATABASE_URL`, t
 The Drizzle schema defines four PostgreSQL tables:
 
 - **`documents`** — file name/type/size, processing status, page and chunk counts, text length, preview, timestamps.
-- **`chunks`** — ordered extracted text segments, optional heading, estimated page number, and token count. References `documents` with cascade delete.
+- **`chunks`** — ordered extracted text segments, optional heading, actual source page where available, and token count. References `documents` with cascade delete.
 - **`conversations`** — document reference, title, and timestamps. References `documents` with cascade delete.
 - **`messages`** — user/assistant role, message text, optional JSON source references, and timestamp. References `conversations` with cascade delete.
 
@@ -91,6 +95,9 @@ The Drizzle schema defines four PostgreSQL tables:
 .
 ├── .env.example                 # Safe environment-variable template
 ├── .gitignore                  # Local secrets and generated files excluded from Git
+├── evaluation
+│   ├── dataset.json            # Small synthetic retrieval/citation evaluation set
+│   └── results.json            # Latest reported metrics and methodology/limitations
 ├── drizzle.config.json         # Drizzle Kit configuration (legacy/static)
 ├── drizzle.config.ts           # Environment-based Drizzle Kit configuration
 ├── eslint.config.mjs
@@ -114,6 +121,7 @@ The Drizzle schema defines four PostgreSQL tables:
     │   │   │   └── route.ts
     │   │   ├── documents
     │   │   │   ├── [id]
+    │   │   │   │   ├── ask/route.test.ts # Multi-document citation route test
     │   │   │   │   ├── ask/route.ts
     │   │   │   │   ├── summarize/route.ts
     │   │   │   │   └── route.ts
@@ -137,7 +145,9 @@ The Drizzle schema defines four PostgreSQL tables:
     │   ├── index.ts             # PostgreSQL connection and in-memory demo adapter
     │   └── schema.ts            # Drizzle tables and relationships
     └── lib
-        ├── __tests__/retrieval.test.ts
+        ├── __tests__
+        │   ├── evaluation.test.ts
+        │   └── retrieval.test.ts
         ├── ai/provider.ts       # Gemini streaming and local demo responses
         ├── auth.ts              # Signed demo session cookie helpers
         ├── document-processing.ts # Validation, extraction, cleanup, chunking
@@ -194,14 +204,18 @@ Never commit `.env.local` or real credentials. `.env.example` contains placehold
 | `npm run lint` | Run ESLint |
 | `npm run typecheck` | Run the TypeScript compiler without emitting files |
 | `npm test` | Run Vitest |
+| `npm run evaluate` | Run the published synthetic retrieval benchmark |
 | `npm run check:deploy` | Check that `DATABASE_URL` is configured |
 
 ## Testing
 
-The tests cover retrieval ranking, file validation, chunk-size behavior, and the in-memory database’s filtering, ordering, updates, and cascades.
+The tests cover retrieval ranking, PDF layout/page extraction, OCR citation labeling, file validation, chunk-size behavior, the in-memory database, and a synthetic contract benchmark.
+
+The current benchmark results are in [`evaluation/results.json`](./evaluation/results.json). The four synthetic cases score **100% answer-evidence support**, **71.4% citation precision**, and **100% retrieval recall@5**. Answer-evidence support means each case's expected fact appears in retrieved text; it is not a measurement of generated Gemini answer accuracy or human judgment.
 
 ```bash
 npm test
+npm run evaluate
 npm run typecheck
 npm run lint
 npm run build
@@ -215,8 +229,11 @@ npm run build
 - Configure a strong `COOKIE_SECRET` for deployments; never rely on a local fallback.
 - File parsing and AI calls consume server resources. Add deployment-appropriate request limits, timeouts, monitoring, and abuse protection.
 - Do not upload sensitive or confidential documents to an unreviewed deployment.
-- Retrieval is local keyword/cosine scoring, not embedding-based semantic search. It may miss relevant passages.
-- PDF page numbers for chunks are estimates. Scanned-PDF OCR is not part of the current upload UI; image extraction support is experimental.
+- Retrieval is local keyword/cosine scoring, not embedding-based semantic search. The displayed evidence status uses query-term overlap and is not a calibrated confidence score.
+- OCR quality depends on scan clarity, rotation, language (English), and server resources. Tables are represented as layout-preserving text, not structured spreadsheet data.
+- Data remains stored until manually deleted. The Settings clear-all action removes documents and related content; PostgreSQL deletion is persistent, while in-memory demo data also disappears on server restart.
+- The app has shared storage and no per-user document authorization. Do not deploy it with sensitive documents without implementing authentication, access isolation, and appropriate retention controls.
+- When Gemini is configured, retrieved passages and questions are transmitted to Google's API; use the local demo responder if external processing is not appropriate.
 - The saved dark/system theme preferences do not currently switch the complete application theme.
 
 ## Deployment notes

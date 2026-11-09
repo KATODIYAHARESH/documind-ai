@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { db } from "@/db";
 import { documents, chunks, conversations, messages } from "@/db/schema";
 import { eq, asc, desc } from "drizzle-orm";
-import { retrieveChunks, buildContext, formatSources } from "@/lib/retrieval";
+import { assessEvidence, retrieveChunks, buildContext, formatSources } from "@/lib/retrieval";
 import { streamGemini, SYSTEM_PROMPT } from "@/lib/ai/provider";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  let body: { question?: unknown; conversationId?: unknown };
+  let body: { question?: unknown; conversationId?: unknown; documentIds?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -33,26 +33,46 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (incomingConvId !== undefined && incomingConvId !== null && typeof incomingConvId !== "string") {
       return new Response(JSON.stringify({ error: "conversationId must be a string." }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
+
+    if (body.documentIds !== undefined && (!Array.isArray(body.documentIds) || body.documentIds.length === 0 || body.documentIds.length > 5 || body.documentIds.some((docId) => typeof docId !== "string"))) {
+      return new Response(JSON.stringify({ error: "documentIds must contain between 1 and 5 document IDs." }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
+    const documentIds = Array.from(new Set([id, ...((body.documentIds as string[] | undefined) ?? [])]));
+    if (documentIds.length > 5) {
+      return new Response(JSON.stringify({ error: "You can ask about up to 5 documents at once." }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
     
     // Verify document exists
-    const doc = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
-    if (!doc[0]) {
+    const selectedDocs = (await Promise.all(documentIds.map(async (documentId) => {
+      const [document] = await db.select().from(documents).where(eq(documents.id, documentId)).limit(1);
+      return document;
+    }))).filter((document) => document !== undefined);
+    if (selectedDocs.length !== documentIds.length) {
       return new Response(JSON.stringify({ error: "Document not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
     }
-    if (doc[0].status !== "completed") {
+    if (selectedDocs.some((doc) => doc.status !== "completed")) {
       return new Response(JSON.stringify({ error: "Document is still processing. Please wait." }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
     
-    // Get chunks
-    const docChunks = await db.select().from(chunks).where(eq(chunks.documentId, id)).orderBy(asc(chunks.chunkIndex));
+    const documentNames = new Map(selectedDocs.map((doc) => [doc.id, doc.filename]));
+    const docChunks = (await Promise.all(documentIds.map((documentId) =>
+      db.select().from(chunks).where(eq(chunks.documentId, documentId)).orderBy(asc(chunks.chunkIndex)),
+    ))).flat();
     if (docChunks.length === 0) {
       return new Response(JSON.stringify({ error: "No content available for this document" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
     
     // Retrieval
-    const retrieved = retrieveChunks(question, docChunks, 5);
+    const retrieved = retrieveChunks(question, docChunks, 5).map((chunk) => ({
+      ...chunk,
+      documentName: documentNames.get(chunk.documentId) ?? "Document",
+    }));
     const context = buildContext(retrieved);
-    const sourcesJson = formatSources(retrieved);
+    const sourcesJson = formatSources(retrieved, question);
+    const evidence = retrieved.map((chunk) => assessEvidence(question, chunk.content));
+    const evidenceStatus = evidence.some((item) => item.status === "strong")
+      ? "strong"
+      : evidence.some((item) => item.status === "partial") ? "partial" : "limited";
     
     // Handle conversation
     let conversationId: string;
@@ -95,7 +115,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         let fullAnswer = "";
         
         // Send metadata first
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "meta", conversationId, sources: retrieved.map(r=>({ chunkIndex: r.chunkIndex, pageNumber: r.pageNumber, heading: r.heading, preview: r.content.slice(0,150)})) })}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "meta", conversationId, evidenceStatus, sources: JSON.parse(sourcesJson) })}\n\n`));
         
         try {
           const generator = streamGemini(SYSTEM_PROMPT, context, question, historyForAI);

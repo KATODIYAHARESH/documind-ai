@@ -143,7 +143,9 @@ export async function* streamMock(prompt: string, context: string, question: str
   yield { text: "", done: true };
 }
 
-export async function generateSummary(context: string, type: "short" | "detailed" | "keypoints" | "definitions" | "findings" | "conclusions" | "action" = "short"): Promise<string> {
+export type SummaryType = "short" | "detailed" | "keypoints" | "definitions" | "findings" | "conclusions" | "action" | "flashcards";
+
+export async function generateSummary(context: string, type: SummaryType = "short"): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   
   if (!apiKey) {
@@ -153,9 +155,17 @@ export async function generateSummary(context: string, type: "short" | "detailed
                   type === "keypoints" ? "### Key Points" :
                   type === "findings" ? "### Main Findings" :
                   type === "conclusions" ? "### Conclusions" :
-                  type === "definitions" ? "### Important Definitions" : "### Action Items";
+                  type === "definitions" ? "### Important Definitions" :
+                  type === "flashcards" ? "### Flashcards" : "### Action Items";
     
     const excerpt = context.slice(0, 1200);
+    if (type === "flashcards") {
+      const facts = context.split(/\n(?=[^[])/).flatMap((section) => section.split(/(?<=[.!?])\s+/))
+        .map((fact) => fact.trim())
+        .filter((fact) => fact.length > 35 && !fact.startsWith("[Source"))
+        .slice(0, 5);
+      return `### Flashcards\n\n${facts.map((fact, index) => `**Card ${index + 1} — Question:** What does the document state?\n\n**Answer:** ${fact}`).join("\n\n") || "No suitable passages were found to create flashcards."}\n\n**Note:** Demo-mode cards are generated from extracted passages.`;
+    }
     return `${intro}\n\n${excerpt}\n\n**Note:** This is a context-based summary generated in demo mode. Add a Gemini API key for AI-powered summarization with hierarchical chunk processing.\n\n**Sources:** Generated from ${context.split("Source").length -1} document sections.`;
   }
   
@@ -167,6 +177,7 @@ export async function generateSummary(context: string, type: "short" | "detailed
     findings: "Summarize the main findings and results presented in the document.",
     conclusions: "Summarize the conclusions and closing remarks of the document.",
     action: "Extract action items, recommendations, and next steps from the document.",
+    flashcards: "Create 5 concise study flashcards. Format each as a question followed by its answer. Use only facts in the document.",
   };
   
   try {

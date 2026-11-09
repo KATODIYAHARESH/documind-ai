@@ -107,7 +107,7 @@ export default function DashboardPage() {
             </div>
             <UploadZone onUploadComplete={refresh} />
             <div className="mt-4 p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-xs text-indigo-800">
-              <strong>Tip:</strong> If PDF upload fails, ensure it has selectable text (not a scanned image). Try converting to TXT or DOCX. All errors are shown above.
+              <strong>Tip:</strong> Scanned PDFs are OCR-processed automatically. Clear, upright English scans produce the best results; all extraction errors are shown above.
             </div>
           </Card>
 
