@@ -193,7 +193,7 @@ export default function SettingsPage() {
             <h2 className="font-semibold">About DocuMind AI</h2>
             <div className="mt-3 text-sm text-slate-600 leading-relaxed">
               <p>DocuMind AI is a document-workspace demo built with Next.js App Router, Drizzle ORM, PostgreSQL, and optional Gemini. It extracts page-aware PDF text, OCRs scanned pages, and streams answers with source passages.</p>
-              <p className="mt-3">Limitations: Retrieval uses keyword scoring rather than embeddings; OCR is English-only; authentication and per-user document authorization are not production-ready.</p>
+              <p className="mt-3">Limitations: Retrieval uses keyword scoring rather than embeddings; OCR is English-only. This app has no login or per-user authorization: anyone who can access it can manage the shared documents.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <span className="px-3 py-1.5 bg-slate-900 text-white rounded-full">Next.js 16.2</span>

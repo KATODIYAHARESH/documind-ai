@@ -2,7 +2,7 @@
 
 DocuMind AI is a document Q&A web app built with Next.js. Upload a document, ask questions about its contents, review the passages used to answer, and generate summaries.
 
-> **Project status:** This is a demo/learning project, not a production-ready SaaS. Authentication and demo storage are in-memory, user passwords are not stored in a production-grade identity system, API routes do not implement per-user document authorization, and PostgreSQL data is shared across users. Do not deploy it with real user data without adding proper authentication, authorization, privacy controls, and operational safeguards.
+> **Project status:** This is a demo/learning project, not a production-ready SaaS. The app has no accounts, login, or per-user authorization. Anyone who can reach the app can view, upload, and delete documents in its shared storage. Do not deploy it publicly with real user data without adding proper authentication, authorization, privacy controls, and operational safeguards.
 
 ## What it does
 
@@ -24,7 +24,7 @@ DocuMind AI is a document Q&A web app built with Next.js. Upload a document, ask
 - **Dashboard (`/dashboard`)** — upload documents, view status and storage statistics, search, open, and delete documents.
 - **Workspace (`/workspace`)** — select a document, chat, inspect source passages, and create summaries.
 - **Settings (`/settings`)** — inspect service status, choose the saved theme preference, and clear documents.
-- **Login and registration (`/login`, `/register`)** — demo-only in-memory account forms.
+- **Open access** — no account or login is required to use the app.
 
 ## Technology
 
@@ -61,16 +61,13 @@ DocuMind AI is a document Q&A web app built with Next.js. Upload a document, ask
 
 ### Storage
 
-PostgreSQL mode uses the schema in `src/db/schema.ts`. Without `DATABASE_URL`, the app uses an in-memory store that supports the operations used by the app, including document/conversation cascades. Demo data is lost when the Node.js server process restarts. The demo store is not isolated by account.
+PostgreSQL mode uses the schema in `src/db/schema.ts`. Without `DATABASE_URL`, the app uses an in-memory store that supports the operations used by the app, including document/conversation cascades. Demo data is lost when the Node.js server process restarts. Storage is shared by all visitors and is not isolated by account.
 
 ## API routes
 
 | Method | Route | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Health and configured database/AI mode |
-| `GET` | `/api/auth/login` | Check whether the request has a valid signed demo session |
-| `POST` | `/api/auth/login` | Sign in to an in-memory account |
-| `POST` | `/api/auth/register` | Create an in-memory demo account |
 | `GET` | `/api/documents` | List documents |
 | `POST` | `/api/documents/upload` | Validate, extract, chunk, and save up to five files |
 | `GET`, `DELETE` | `/api/documents/[id]` | Read a document and its chunks, or delete it |
@@ -101,7 +98,7 @@ The Drizzle schema defines four PostgreSQL tables:
 ├── drizzle.config.json         # Drizzle Kit configuration (legacy/static)
 ├── drizzle.config.ts           # Environment-based Drizzle Kit configuration
 ├── eslint.config.mjs
-├── middleware.ts               # Page protection and response security headers
+├── middleware.ts               # API response security headers
 ├── next.config.ts
 ├── package.json                # Scripts and dependencies
 ├── package-lock.json
@@ -112,9 +109,6 @@ The Drizzle schema defines four PostgreSQL tables:
 └── src
     ├── app
     │   ├── api
-    │   │   ├── auth
-    │   │   │   ├── login/route.ts
-    │   │   │   └── register/route.ts
     │   │   ├── chat/clear/route.ts
     │   │   ├── conversations
     │   │   │   ├── [id]/route.ts
@@ -129,8 +123,6 @@ The Drizzle schema defines four PostgreSQL tables:
     │   │   │   └── route.ts
     │   │   └── health/route.ts
     │   ├── dashboard/page.tsx
-    │   ├── login/page.tsx
-    │   ├── register/page.tsx
     │   ├── settings/page.tsx
     │   ├── workspace/page.tsx
     │   ├── globals.css
@@ -149,12 +141,10 @@ The Drizzle schema defines four PostgreSQL tables:
         │   ├── evaluation.test.ts
         │   └── retrieval.test.ts
         ├── ai/provider.ts       # Gemini streaming and local demo responses
-        ├── auth.ts              # Signed demo session cookie helpers
         ├── document-processing.ts # Validation, extraction, cleanup, chunking
         ├── ocr.ts               # Image OCR
         ├── retrieval.ts         # Passage scoring and source formatting
         ├── security.ts          # Input helpers, rate limits, response headers
-        └── user-store.ts        # In-memory demo user store
 ```
 
 ## Requirements
@@ -173,7 +163,7 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Register a demo account at `/register`; accounts exist only in the running process.
+Open [http://localhost:3000](http://localhost:3000). No account or login is required.
 
 For PostgreSQL, set `DATABASE_URL` in `.env.local`, then apply the schema:
 
@@ -190,7 +180,6 @@ To use Gemini, set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) in `.env.local` and re
 | `DATABASE_URL` | No | PostgreSQL connection string. Omit for non-persistent in-memory demo mode. |
 | `GEMINI_API_KEY` | No | Google Gemini API key for generated answers and summaries. |
 | `GOOGLE_API_KEY` | No | Alternative Gemini API key variable. |
-| `COOKIE_SECRET` | No for local demo | Session-cookie signing secret. Set a long, random value anywhere the app is deployed. |
 
 Never commit `.env.local` or real credentials. `.env.example` contains placeholders only.
 
@@ -223,22 +212,19 @@ npm run build
 
 ## Security and production limitations
 
-- The login/register implementation and user store are demo-only and in-memory. Use a proper identity provider and password hashing before deployment.
-- The API currently does not enforce per-user document ownership. Documents and conversations are shared by the demo backend.
+- The app is intentionally open access. Anyone who can reach it can manage the shared documents and conversations; add authentication and access controls before public deployment.
 - Without PostgreSQL, all application data is lost when the server restarts.
-- Configure a strong `COOKIE_SECRET` for deployments; never rely on a local fallback.
 - File parsing and AI calls consume server resources. Add deployment-appropriate request limits, timeouts, monitoring, and abuse protection.
 - Do not upload sensitive or confidential documents to an unreviewed deployment.
 - Retrieval is local keyword/cosine scoring, not embedding-based semantic search. The displayed evidence status uses query-term overlap and is not a calibrated confidence score.
 - OCR quality depends on scan clarity, rotation, language (English), and server resources. Tables are represented as layout-preserving text, not structured spreadsheet data.
 - Data remains stored until manually deleted. The Settings clear-all action removes documents and related content; PostgreSQL deletion is persistent, while in-memory demo data also disappears on server restart.
-- The app has shared storage and no per-user document authorization. Do not deploy it with sensitive documents without implementing authentication, access isolation, and appropriate retention controls.
 - When Gemini is configured, retrieved passages and questions are transmitted to Google's API; use the local demo responder if external processing is not appropriate.
 - The saved dark/system theme preferences do not currently switch the complete application theme.
 
 ## Deployment notes
 
-The project can be deployed to a Node.js host or Vercel after configuring `DATABASE_URL`, `COOKIE_SECRET`, and optionally `GEMINI_API_KEY`. Before production, implement persistent accounts and per-user authorization, verify file-upload limits for the chosen host, and review the security limitations above. `npm run check:deploy` only checks for the database URL; it is not a full production-readiness or security check.
+The project can be deployed to a Node.js host or Vercel after configuring `DATABASE_URL` and optionally `GEMINI_API_KEY`. Before production, implement persistent accounts and per-user authorization, verify file-upload limits for the chosen host, and review the security limitations above. `npm run check:deploy` only checks for the database URL; it is not a full production-readiness or security check.
 
 ## License
 
