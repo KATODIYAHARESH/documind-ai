@@ -6,7 +6,10 @@ export interface DemoUser {
   createdAt: string;
 }
 
-const demoUsers = new Map<string, DemoUser>();
+const globalForUsers = globalThis as typeof globalThis & {
+  __documindDemoUsers?: Map<string, DemoUser>;
+};
+const demoUsers = globalForUsers.__documindDemoUsers ??= new Map<string, DemoUser>();
 
 export function findUserByEmail(email: string): DemoUser | undefined {
   return demoUsers.get(email.trim().toLowerCase());
